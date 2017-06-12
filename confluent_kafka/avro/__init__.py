@@ -36,7 +36,8 @@ class AvroProducer(Producer):
             raise ValueError("Cannot pass schema_registry along with schema.registry.url config")
 
         super(AvroProducer, self).__init__(config)
-        self._serializer = MessageSerializer(schema_registry)
+        self._key_serializer = config.pop("key.serializer", MessageSerializer(schema_registry))
+        self._value_serializer = config.pop("key.serializer", MessageSerializer(schema_registry))
         self._key_schema = default_key_schema
         self._value_schema = default_value_schema
 
@@ -60,16 +61,22 @@ class AvroProducer(Producer):
         key = kwargs.pop('key', None)
 
         if value:
-            if value_schema:
-                value = self._serializer.encode_record_with_schema(topic, value_schema, value)
+            if not(isinstance(self._value_serializer, MessageSerializer)):
+                value = self._value_serializer.encode(topic, value)
             else:
-                raise ValueSerializerError("Avro schema required for values")
+                if value_schema:
+                    value = self._value_serializer.encode_record_with_schema(topic, value_schema, value)
+                else:
+                    raise ValueSerializerError("Avro schema required for values")
 
         if key:
-            if key_schema:
-                key = self._serializer.encode_record_with_schema(topic, key_schema, key, True)
+            if not(isinstance(self._value_serializer, MessageSerializer)):
+                key = self._value_serializer.encode(topic, value)
             else:
-                raise KeySerializerError("Avro schema required for key")
+                if key_schema:
+                    key = self._key_serializer.encode_record_with_schema(topic, key_schema, key, True)
+                else:
+                    raise KeySerializerError("Avro schema required for key")
 
         super(AvroProducer, self).produce(topic, value, key, **kwargs)
 
@@ -93,7 +100,8 @@ class AvroConsumer(Consumer):
             raise ValueError("Cannot pass schema_registry along with schema.registry.url config")
 
         super(AvroConsumer, self).__init__(config)
-        self._serializer = MessageSerializer(schema_registry)
+        self._key_serializer = config.pop("key_serializer", MessageSerializer)
+        self._value_serializer = config.pop("value_serializer", MessageSerializer)
 
     def poll(self, timeout=None):
         """
@@ -112,9 +120,9 @@ class AvroConsumer(Consumer):
             return message
         if not message.error():
             if message.value() is not None:
-                decoded_value = self._serializer.decode_message(message.value())
+                decoded_value = self._value_serializer.decode_message(message.value())
                 message.set_value(decoded_value)
             if message.key() is not None:
-                decoded_key = self._serializer.decode_message(message.key())
+                decoded_key = self._key_serializer.decode_message(message.key())
                 message.set_key(decoded_key)
         return message
